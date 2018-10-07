@@ -1,0 +1,118 @@
+global:
+  bucket_name: "com.cia.ops.automation"
+  region: "us-west-2"
+
+modules:
+  - ecs-iam-roles:
+      src_path: "../terraform/modules/ecs-iam-roles/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/ecs-iam-roles/"
+      description: "ECS IAM Roles TF module"
+
+  - ecs-cluster:
+      src_path: "../terraform/modules/ecs-cluster/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/ecs-cluster/"
+      description: "ECS Cluster TF module"
+
+  - ecs-service-nlb:
+      src_path: "../terraform/modules/ecs-service-nlb/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/ecs-service/"
+      description: "ECS Service TF module with NLB"
+
+  - ecs-service-alb:
+      src_path: "../terraform/modules/ecs-service-alb/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/ecs-service-alb/"
+      description: "ECS Service TF module with ALB"
+
+  - ecs-service:
+      src_path: "../terraform/modules/ecs-service/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/ecs-service-worker/"
+      description: "ECS Service TF module withour Load Balancer"
+
+  - asg:
+      src_path: "../terraform/modules/primitives/asg/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/asg/"
+      description: "AWS EC2 Autoscaling Group Primitive"
+
+  - iam_instance_profile:
+      src_path: "../terraform/modules/primitives/iam_instance_profile/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/iam_instance_profile/"
+      description: "AWS IAM Instance profile Primitive"
+
+  - iam_policy_role:
+      src_path: "../terraform/modules/primitives/iam_policy_role/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/iam_policy_role/"
+      description: "AWS IAM Policy Role Primitive"
+
+  - iam_policy_role_attachment:
+      src_path: "../terraform/modules/primitives/iam_policy_role_attachment/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/iam_policy_role_attachment/"
+      description: "AWS IAM Policy Role Attachment Primitive"
+
+  - iam_role:
+      src_path: "../terraform/modules/primitives/iam_role/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/iam_role/"
+      description: "AWS IAM Role Primitive"
+
+  - lc:
+      src_path: "../terraform/modules/primitives/lc/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/lc/"
+      description: "AWS EC2 Launch Configuration Primitive"
+
+  - nacl:
+      src_path: "../terraform/modules/primitives/nacl/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/nacl/"
+      description: "AWS VPC Network ACL Primitive"
+
+  - nlb:
+      src_path: "../terraform/modules/primitives/nlb/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/nlb/"
+      description: "AWS Network Load Balancer Primitive"
+
+  - nlb_listener:
+      src_path: "../terraform/modules/primitives/nlb_listener/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/nlb_listener/"
+      description: "AWS Network Load Balancer Listener Primitive"
+
+  - nlb_target_group:
+      src_path: "../terraform/modules/primitives/nlb_target_group/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/nlb_target_group/"
+      description: "AWS Network Load Balancer Target Group Primitive"
+
+  - sg:
+      src_path: "../terraform/modules/primitives/sg/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/sg/"
+      description: "AWS Security Group Primitive"
+
+  - sns_topic:
+      src_path: "../terraform/modules/primitives/sns_topic/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/sns_topic/"
+      description: "AWS SNS Topic Primitive"
+
+  - sns_topic_subscription:
+      src_path: "../terraform/modules/primitives/sns_topic_subscription/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/sns_topic_subscription/"
+      description: "AWS SNS Topic Subscription Primitive"
+
+  - vpc:
+      src_path: "../terraform/modules/primitives/vpc/"
+      version: "0.0.1"
+      s3_path: "terraform/modules/primitives/vpc/"
+      description: "AWS VPC Primitive"

@@ -1,0 +1,20 @@
+[
+  {
+    "volumesFrom": [],
+    "portMappings": [
+      {
+        "hostPort": 0,
+        "containerPort": 443,
+        "protocol": "tcp"
+      }
+    ],
+    "essential": true,
+    "mountPoints": [],
+    "name": "lb_container",
+    "environment": [],
+    "links": [],
+    "image": "marvambass/nginx-ssl-secure",
+    "cpu": 0,
+    "memoryReservation": 256
+  }
+]

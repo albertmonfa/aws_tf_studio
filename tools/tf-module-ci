@@ -1,0 +1,348 @@
+#!/usr/bin/python
+
+'''
+Author: Albert Monfa - 2018
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+'''
+
+'''
+TODOS
+=====
+    - Limits on Thread/Process Concurrency
+    - Setting timeouts on queue waiting events
+    - Adding feature: overwriting module version
+    - Adding feature: Bucket_create_if_not_exist
+    - Adding feature: Clean_bucket to delete all objects.
+    - Adding feature: purge old objects from bucket
+'''
+
+import os
+import sys
+import boto3
+import botocore
+import yaml
+import logging
+import logging.handlers
+import argparse
+import time
+import shutil
+import tempfile
+from pprint import pprint
+from multiprocessing import Process, Queue
+from threading import Thread
+from jinja2 import Template
+from jsonschema import validate, ValidationError
+
+global logger
+threadpool = list()
+processpool = list()
+
+# Constant subsystem
+def constant(f):
+    def fset(self, value):
+        raise TypeError
+    def fget(self):
+        return f()
+    return property(fget, fset)
+
+class _Const(object):
+    @constant
+    def APP_NAME_DESC():
+        return """
+                This tool is designed as CI for terraform modules in our environment
+                of automation environment. The tool uses the config file "modules.yml"
+                to create a map over the TF modules ready to be upload into a S3 bucket.
+                After that this modules will be used as the baseline to create projects
+                using the tf-project-ci tool.
+               """
+    @constant
+    def APP_NAME():
+        return 'tf-module-ci'
+    @constant
+    def APP_USAGE():
+        return """
+        tf-module-ci [-h] [--config file]
+
+        To using tf-module-ci you need define first a file configuration
+        with read permissions. By default the aplications expect to
+        find that file on config/modules.yml. An exemple of
+        the yaml config file could be:
+
+        ---
+        global:
+          bucket_name: "com.cia.ops.bucket"
+          region: "us-west-2"
+
+        modules:
+          - ecs-iam-roles:
+              src_path: "../modules/ecs-iam-roles/"
+              version: "0.0.1"
+              s3_path: "modules/ecs-iam-roles/"
+              description: "ECS IAM Roles TF module"
+        (...)
+        ...
+
+        You can add as many modules as you need.
+        """
+    @constant
+    def APP_EPILOG():
+        return """
+         TerraForm Module CI - 2018 Albert Monfa.
+         This Software is released under Apache License, Version 2.0.
+        """
+
+class zip_worker(Process):
+    __filename = None
+    __target_path = []
+    __queue = None
+    mod_name = None
+    mod_props = None
+
+    __tmp_path = None
+    __tmp_file = None
+
+    failed = False
+
+    def __init__(self, queue, mod_name, mod_props):
+        self.__queue = queue
+        self.mod_name = mod_name
+        self.mod_props = mod_props
+
+        self.__filename = mod_name+'-'+mod_props['version']
+        self.__target_path = mod_props['src_path']
+        self.__tmp_path = tempfile.mkdtemp()
+        super(zip_worker, self).__init__()
+
+    def purge(self):
+        shutil.rmtree(self.__tmp_path)
+
+    def run(self):
+        try:
+            self.__tmp_file = os.path.join(self.__tmp_path, self.__filename)
+            root_dir = "."
+            data = open(shutil.make_archive(self.__tmp_file, 'zip', self.__target_path), 'rb').read()
+            msg = {
+                    "mod_name" : self.mod_name,
+                    "mod_props" : self.mod_props,
+                    "src" : self.__tmp_file + '.zip'
+                  }
+            self.__queue.put(msg)
+        except Exception as e:
+            self.failed = True
+            logger.error("Can't Zipping "+ str(self.__target_path) + ' with message: ' \
+                            + str(e.message)
+                        )
+
+class s3_uploader(Thread):
+    s3_bucket = None
+    s3_key = None
+    src = None
+    session = None
+    s3 = None
+    queue = None
+
+    failed = False
+
+    def __init__(self, queue, s3_bucket):
+        Thread.__init__(self)
+        self.queue = queue
+        self.s3_bucket = s3_bucket
+        self.daemon = True
+        self.start()
+
+    def s3_key_exist(self):
+        try:
+            self.s3.Object(self.s3_bucket, self.s3_key).load()
+            return True
+        except botocore.exceptions.ClientError as e:
+            if e.response['Error']['Code'] == "404":
+                return False
+            else:
+                self.failed = True
+                logger.fatal('S3 Object '+ str(self.s3_key) + ' in bucket '  \
+                                + str(self.s3_bucket) + ' unhandled error: ' \
+                                + str(e.message)
+                            )
+        except Exception as e:
+            self.failed = True
+            logger.fatal('Boto3 exception with message: '+str(e))
+            return False
+
+    def s3_upload_file(self):
+        if self.s3_key_exist():
+           logger.info('S3 Object '+ str(self.s3_key) + ' in bucket ' \
+                            + str(self.s3_bucket) + ' already uploaded!'
+                        )
+           return False
+        try:
+            bucket = self.s3.Bucket(self.s3_bucket)
+            data = open(self.src, 'rb')
+            bucket.put_object( Key=self.s3_key,
+                               ACL='private',
+                               Metadata={
+                                'foo' : 'bar'
+                               },
+                               Body=data
+                             )
+            return True
+        except Exception as e:
+            logger.fatal('S3 problem in Bucket '+ self.s3_bucket +\
+                         ', with Key ' + self.s3_key + ' msg: '+str(e)
+                        )
+            self.failed = True
+            return False
+
+    def run(self):
+        upload_params = dict(self.queue.get())
+        mod_name = upload_params['mod_name']
+        mod_props = upload_params['mod_props']
+
+        self.s3_key = mod_props['s3_path'] + mod_name + '-' + \
+                      mod_props['version'] + '.zip'
+        self.src = upload_params['src']
+
+        self.session = boto3.session.Session()
+        self.s3 = self.session.resource('s3')
+        if self.s3_upload_file():
+           logger.info('Uploading file from Bucket: '+ self.s3_bucket +\
+                       ', Key: ' + self.s3_key + ' from ' + self.src
+                      )
+
+
+def config_validator():
+    global_sch  = {
+        "type": "object",
+        "required": [ "global", "modules"],
+        "properties" : {
+            "global": {
+                "type": "object",
+                "required": ["bucket_name"],
+            "properties": {
+                "bucket_name":  { "type": "string" },
+                "region": { "type": "string" },
+            },
+                "additionalProperties": False
+            },
+            "modules": {
+                "type": "array"
+            },
+        },
+    }
+    modules_sch  = {
+       "type": "object",
+       "required": [ "src_path","version","s3_path"],
+       "properties" : {
+         "src_path":  { "type": "string" },
+         "version":  { "type": "string" },
+         "s3_path":  { "type": "string" },
+         "description":  { "type": "string" },
+       },
+       "additionalProperties": False
+    }
+    try:
+        validate(cfg,  global_sch)
+        for module in cfg['modules']:
+            validate(dict(module).popitem()[1],  modules_sch)
+    except Exception as e:
+        logger.fatal('Fatal error validating YaML conf: '+str(e.message))
+        sys.exit(1)
+
+def load_yaml_config( file ):
+    try:
+        with open(file, 'r') as yml_file:
+             global cfg
+             cfg = yaml.load(yml_file)
+             config_validator()
+    except Exception as e:
+           logger.fatal('Error yaml validation:'+ str(e))
+           logger.fatal('Error loading yaml file config, it seems broken or missing! file:'+ str(file))
+           sys.exit(1)
+
+def file_exists( file ):
+    if os.path.exists( file ) and os.path.isfile( file ):
+       return True
+    return False
+
+def orchestrator():
+    queue = Queue()
+    for module in cfg['modules']:
+        mod_name = module.keys()[0]
+        mod_props = module.values()[0]
+
+        zipper = zip_worker(
+                             queue,
+                             mod_name,
+                             mod_props
+                            )
+        processpool.append(zipper)
+        zipper.start()
+        s3_thread_uploader = s3_uploader(
+                                            queue,
+                                            cfg['global']['bucket_name']
+                                        )
+        threadpool.append(s3_thread_uploader)
+
+def wait_to_complete():
+    for thread in threadpool:
+        thread.join()
+    for process in processpool:
+        process.join()
+        process.purge()
+
+def shutdown():
+    failed = False
+    for process in processpool:
+        if process.failed:
+           logger.error("Zipping module: "+process.mod_name)
+           failed = True
+    for thread in threadpool:
+        if thread.failed:
+           logger.error("Uploading file: "+thread.s3_key)
+           failed = True
+    if failed:
+        logger.error("FAIL - Application exited with errors.")
+        sys.exit(1)
+    logger.info("SUCCESS - All Modules uploaded into S3 Repository")
+    sys.exit(0)
+
+def cli_args_builder():
+    parser = argparse.ArgumentParser(
+                                      prog=str(CONST.APP_NAME),
+                                      usage=str(CONST.APP_USAGE),
+                                      description=str(CONST.APP_NAME_DESC),
+                                      epilog=str(CONST.APP_EPILOG)
+                                    )
+    parser.add_argument('--config', '-c',
+                            dest='config_file',
+                            default=str(os.getcwd())+'/../config/tf-modules.yml',
+                            help='tf-module-ci yaml config file.'
+                        )
+    return vars(parser.parse_args())
+
+
+if __name__ == '__main__':
+    CONST = _Const()
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s -  %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    args = cli_args_builder()
+    load_yaml_config(args['config_file'])
+    orchestrator()
+    wait_to_complete()
+    shutdown()
